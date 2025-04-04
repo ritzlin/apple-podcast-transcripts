@@ -21,7 +21,7 @@
   <meta name="description" content="View and copy Apple Podcast transcripts.">
 
   <style>
-    .podcast {
+    .podcast, .noPodcasts {
       overflow: hidden;
       padding: 20px;
       border-radius: 8px;
@@ -29,11 +29,12 @@
       background-color: white;
       max-width: 800px;
 
-      cursor: pointer;
-
       box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
 
       transition: 0.3s ease;
+    }
+    .podcast {
+      cursor: pointer;
     }
     .podcast:hover {
       transform: scale(1.03);
@@ -363,6 +364,19 @@
         `;
 
         podcastDiv.onclick = () => openTranscriptPopup(transcript.transcripts);
+
+        podcasts.appendChild(podcastDiv);
+      }
+      // If there aren't any transcripts include a little thing saying why
+      if (Object.values(transcripts).length === 0) {
+        const podcastDiv = document.createElement("div");
+        podcastDiv.className = "noPodcasts";
+        podcastDiv.style = 'text-align: center;';
+        podcastDiv.innerHTML = `
+        <div class="title" style="display: block; text-align: center;">No podcast transcripts found</div><br />
+        Make sure you followed step 1 to locally cache the transcript data so it can be read.<br /><br />
+        <div><span class="indicator">1</span>Go to the episode in the <a href="podcasts://" style="color: #9e42cf;">MacOS Podcasts app</a> and click where it says 'Transcript' (or the triple dots ··· > 'View Transcript').</div>
+        `;
 
         podcasts.appendChild(podcastDiv);
       }
