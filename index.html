@@ -239,7 +239,7 @@
   </script>
   <script type="module">
     // Handle mobile apps
-    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+    if ('ontouchstart' in window || navigator.maxTouchPoints) {
       document.querySelector('.explanation').innerHTML = `
         <h1>Apple Podcast Transcript Viewer</h1>
         <p>
