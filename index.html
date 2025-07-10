@@ -274,111 +274,156 @@
       // Clear the current podcast list
       podcasts.innerHTML = '';
 
-      const items = event.dataTransfer.items;
+      try {
+        const items = event.dataTransfer.items;
 
-      // Extract the relevant info
-      const queue = [];
-      for (let i = 0; i < items.length; i++) {
-        const entry = items[i].webkitGetAsEntry();
-        if (entry) queue.push(traverseFileTree(entry));
-      }
-      const relevantFiles = { transcripts: {}, mainDB: null, walFile: null };
-      const result = await Promise.all(queue);
-      for (const info of result) {
-        relevantFiles['transcripts'] = { ...relevantFiles['transcripts'], ...info['transcripts'] };
-        if (info.mainDB) relevantFiles.mainDB = info.mainDB;
-        if (info.walFile) relevantFiles.walFile = info.walFile;
-      }
+        // Extract the relevant info
+        const queue = [];
+        for (let i = 0; i < items.length; i++) {
+          const entry = items[i].webkitGetAsEntry();
+          if (entry) queue.push(traverseFileTree(entry));
+        }
+        const relevantFiles = { transcripts: {}, mainDB: null, walFile: null };
+        const result = await Promise.all(queue);
+        for (const info of result) {
+          relevantFiles['transcripts'] = { ...relevantFiles['transcripts'], ...info['transcripts'] };
+          if (info.mainDB) relevantFiles.mainDB = info.mainDB;
+          if (info.walFile) relevantFiles.walFile = info.walFile;
+        }
 
-      let db = null;
-      if (relevantFiles.mainDB && relevantFiles.walFile) {
-        db = new SQL.Database(new Uint8Array(relevantFiles.mainDB), new Uint8Array(relevantFiles.walFile));
-      } else if (relevantFiles.mainDB) {
-        db = new SQL.Database(new Uint8Array(relevantFiles.mainDB));
-      }
+        let db = null;
+        if (relevantFiles.mainDB && relevantFiles.walFile) {
+          db = new SQL.Database(new Uint8Array(relevantFiles.mainDB), new Uint8Array(relevantFiles.walFile));
+        } else if (relevantFiles.mainDB) {
+          db = new SQL.Database(new Uint8Array(relevantFiles.mainDB));
+        }
 
-      let transcripts = {};
+        let transcripts = {};
 
-      if (db) {
-        const keys = Object.keys(relevantFiles.transcripts);
-        const podcastInfo = db.exec(
-          `SELECT
-            ZSTORETRACKID,
-            ZAUTHOR,
-            ZCLEANEDTITLE,
-            ZITUNESSUBTITLE,
-            ZDURATION,
-            ZFIRSTTIMEAVAILABLE
-          FROM ZMTEPISODE
-          WHERE ZSTORETRACKID IN (
-            ${keys.join(', ')}
-          );
-        `);
-        // All transcripts
-        if (podcastInfo.length > 0) {
-          for (const pod of podcastInfo[0].values) {
-            transcripts[pod[0]] = {
-              'author': pod[1],
-              'title': pod[2],
-              'description': pod[3],
-              'duration': pod[4],
-              'time': pod[5] + 978307200, // Adjust for Jan 1st time which Apple uses
+        if (db) {
+          const keys = Object.keys(relevantFiles.transcripts);
+          // Some of the DBs don't have the `ZFIRSTTIMEAVAILABLE` column, so check if 
+          // it exists with pragma first.
+          const columns = new Set(db.exec('PRAGMA table_info(ZMTEPISODE);')[0].values.map(v => v[1]));
+          if (columns.has('ZFIRSTTIMEAVAILABLE')) {
+            const podcastInfo = db.exec(
+              `SELECT
+                ZSTORETRACKID,
+                ZAUTHOR,
+                ZCLEANEDTITLE,
+                ZITUNESSUBTITLE,
+                ZDURATION,
+                ZFIRSTTIMEAVAILABLE
+              FROM ZMTEPISODE
+              WHERE ZSTORETRACKID IN (
+                ${keys.join(', ')}
+              );
+            `);
+            // All transcripts
+            if (podcastInfo.length > 0) {
+              for (const pod of podcastInfo[0].values) {
+                transcripts[pod[0]] = {
+                  'author': pod[1],
+                  'title': pod[2],
+                  'description': pod[3],
+                  'duration': pod[4],
+                  'time': pod[5] + 978307200, // Adjust for Jan 1st time which Apple uses
+                };
+              }
+            }
+          } else {
+            const podcastInfo = db.exec(
+              `SELECT
+                ZSTORETRACKID,
+                ZAUTHOR,
+                ZCLEANEDTITLE,
+                ZITUNESSUBTITLE,
+                ZDURATION
+              FROM ZMTEPISODE
+              WHERE ZSTORETRACKID IN (
+                ${keys.join(', ')}
+              );
+            `);
+            console.log(podcastInfo);
+            // All transcripts
+            if (podcastInfo.length > 0) {
+              for (const pod of podcastInfo[0].values) {
+                transcripts[pod[0]] = {
+                  'author': pod[1],
+                  'title': pod[2],
+                  'description': pod[3],
+                  'duration': pod[4],
+                  'time': -1,
+                };
+              }
+            }
+          }
+        }
+        for (const podcastId in relevantFiles.transcripts) {
+          if (podcastId in transcripts) {
+            transcripts[podcastId]['transcripts'] = relevantFiles['transcripts'][podcastId].podcastChunks;
+            transcripts[podcastId]['lastModified'] = relevantFiles['transcripts'][podcastId].lastModified;
+          } else {
+            transcripts[podcastId] = {
+              'author': 'Unknown',
+              'title': 'Unknown',
+              'description': '',
+              'duration': -1,
+              'time': -1,
+              'transcripts' : relevantFiles['transcripts'][podcastId].podcastChunks,
+              'lastModified': relevantFiles['transcripts'][podcastId].lastModified,
             };
           }
         }
-      }
-      for (const podcastId in relevantFiles.transcripts) {
-        if (podcastId in transcripts) {
-          transcripts[podcastId]['transcripts'] = relevantFiles['transcripts'][podcastId].podcastChunks;
-          transcripts[podcastId]['lastModified'] = relevantFiles['transcripts'][podcastId].lastModified;
-        } else {
-          transcripts[podcastId] = {
-            'author': 'Unknown',
-            'title': 'Unknown',
-            'description': '',
-            'duration': -1,
-            'time': -1,
-            'transcripts' : relevantFiles['transcripts'][podcastId].podcastChunks,
-            'lastModified': relevantFiles['transcripts'][podcastId].lastModified,
-          };
+
+        // Sort it by last modified
+        transcripts = Object.fromEntries(Object.entries(transcripts)
+          .sort(([, a], [, b]) => new Date(b.lastModified) - new Date(a.lastModified)));
+
+        // Iterate over it
+        for (const transcript of Object.values(transcripts)) {
+          const podcastDiv = document.createElement("div");
+          podcastDiv.className = "podcast";
+          let description = transcript.description;
+          if (description == '') {
+            description = transcript.transcripts.map(s => s.sentences).join("\n");
+          }
+          podcastDiv.innerHTML = `
+          <div class="info">${formatDate(transcript.time)} · ${formatTime(transcript.duration)}</div>
+          <div class="title">${transcript.title}</div>
+          <span class="author">${transcript.author}</span>
+          <div class="description">${description}</div>
+          `;
+
+          podcastDiv.onclick = () => openTranscriptPopup(transcript.transcripts);
+
+          podcasts.appendChild(podcastDiv);
         }
-      }
+        // If there aren't any transcripts include a little thing saying why
+        if (Object.values(transcripts).length === 0) {
+          const podcastDiv = document.createElement("div");
+          podcastDiv.className = "noPodcasts";
+          podcastDiv.style = 'text-align: center;';
+          podcastDiv.innerHTML = `
+          <div class="title" style="display: block; text-align: center;">No podcast transcripts found</div><br />
+          Make sure you followed step 1 to locally cache the transcript data so it can be read.<br /><br />
+          <div><span class="indicator">1</span>Go to the episode in the <a href="podcasts://" style="color: #9e42cf;">MacOS Podcasts app</a> and click where it says 'Transcript' (or the triple dots ··· > 'View Transcript').</div>
+          `;
 
-      // Sort it by last modified
-      transcripts = Object.fromEntries(Object.entries(transcripts)
-        .sort(([, a], [, b]) => new Date(b.lastModified) - new Date(a.lastModified)));
-
-      // Iterate over it
-      for (const transcript of Object.values(transcripts)) {
-        const podcastDiv = document.createElement("div");
-        podcastDiv.className = "podcast";
-        let description = transcript.description;
-        if (description == '') {
-          description = transcript.transcripts.map(s => s.sentences).join("\n");
+          podcasts.appendChild(podcastDiv);
         }
-        podcastDiv.innerHTML = `
-        <div class="info">${formatDate(transcript.time)} · ${formatTime(transcript.duration)}</div>
-        <div class="title">${transcript.title}</div>
-        <span class="author">${transcript.author}</span>
-        <div class="description">${description}</div>
-        `;
-
-        podcastDiv.onclick = () => openTranscriptPopup(transcript.transcripts);
-
-        podcasts.appendChild(podcastDiv);
-      }
-      // If there aren't any transcripts include a little thing saying why
-      if (Object.values(transcripts).length === 0) {
+      } catch (e) {
         const podcastDiv = document.createElement("div");
         podcastDiv.className = "noPodcasts";
         podcastDiv.style = 'text-align: center;';
         podcastDiv.innerHTML = `
-        <div class="title" style="display: block; text-align: center;">No podcast transcripts found</div><br />
-        Make sure you followed step 1 to locally cache the transcript data so it can be read.<br /><br />
-        <div><span class="indicator">1</span>Go to the episode in the <a href="podcasts://" style="color: #9e42cf;">MacOS Podcasts app</a> and click where it says 'Transcript' (or the triple dots ··· > 'View Transcript').</div>
+        <div class="title" style="display: block; text-align: center;">Something went wrong!</div><br />
+        <pre><code>${e}</code></pre>
+        <br />If you <a target="_blank" href="https://github.com/dado3212/apple-podcast-transcripts/issues">create an issue on Github with the above error</a> I can try and fix the problem!
         `;
 
         podcasts.appendChild(podcastDiv);
+        console.log(e);
       }
     });
 
