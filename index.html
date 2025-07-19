@@ -447,15 +447,30 @@
         const reader = entry.createReader();
         return new Promise((resolve) => {
           const mainInfo = { transcripts: {}, mainDB: null, walFile: null };
-          reader.readEntries(async (entries) => {
-            for (const subEntry of entries) {
-              const subInfo = await traverseFileTree(subEntry);
-              mainInfo['transcripts'] = { ...mainInfo['transcripts'], ...subInfo['transcripts'] };
-              if (subInfo.mainDB) mainInfo.mainDB = subInfo.mainDB;
-              if (subInfo.walFile) mainInfo.walFile = subInfo.walFile;
-            }
-            resolve(mainInfo);
-          });
+
+          // readEntries only returns 100 by default. You need to keep
+          // iterating 
+          function readAllEntries() {
+            reader.readEntries(async (entries) => {
+              console.log(entries);
+
+              for (const subEntry of entries) {
+                const subInfo = await traverseFileTree(subEntry);
+                mainInfo['transcripts'] = { ...mainInfo['transcripts'], ...subInfo['transcripts'] };
+                if (subInfo.mainDB) mainInfo.mainDB = subInfo.mainDB;
+                if (subInfo.walFile) mainInfo.walFile = subInfo.walFile;
+              }
+
+              // Artificial cap, go again
+              if (entries.length === 100) {
+                readAllEntries();
+              } else {
+                return resolve(mainInfo);
+              }
+            });
+          }
+
+          readAllEntries();
         });
       } else {
         return { transcripts: {}, mainDB: null, walFile: null };
