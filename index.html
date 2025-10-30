@@ -488,7 +488,7 @@
           const match = file.name.match(/(\d+)/);
           const podcastId = match ? match[1] : null;
 
-          if (!body || !podcastId) return callback({});
+          if (!body || !podcastId) return reject('Invalid transcript file');
 
           const podcastChunks = [];
 
@@ -498,9 +498,12 @@
             const speaker = speakingChunk.getAttribute('ttm:agent');
             const sentences = [...speakingChunk.querySelectorAll('span')]
               .filter(sp => sp.getAttribute('podcasts:unit') === 'sentence')
-              .map(sentence => [...sentence.querySelectorAll('span')].map(sp => sp.textContent).join(' '))
-              .join(' ');
-              podcastChunks.push({ speaker, sentences });
+              .map(sentence => [...sentence.querySelectorAll('span')].map(sp => sp.textContent).join(' '));
+            // Take each 3 sentences as a chunk: for a single speaker transcript, the whole <p> can be very long
+            for (let i = 0; i < sentences.length; i += 3) {
+              const chunkSentences = sentences.slice(i, i + 3).join(' ');
+              podcastChunks.push({ speaker, sentences: chunkSentences });
+            }
           }
 
           resolve({ [podcastId]: { podcastChunks, lastModified: file.lastModified } });
